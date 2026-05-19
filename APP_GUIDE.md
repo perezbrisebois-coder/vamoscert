@@ -205,3 +205,4 @@ firebase deploy
 
 **Why it's better than just reading:**
 Active recall (being asked questions) is the most effective study method. VamosCert forces that automatically by generating practice questions and an interactive tutor from your specific materials.
+

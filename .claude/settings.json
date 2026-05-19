@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /Users/cpf/Sites/vamoscert && if [ -n \"$(git status --porcelain)\" ]; then git add -A && git commit -m \"auto: $(date +'%Y-%m-%d %H:%M')\" && git push origin main; fi 2>/dev/null || true",
+            "statusMessage": "Saving to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}
