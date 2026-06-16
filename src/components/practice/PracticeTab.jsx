@@ -1,8 +1,17 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { getPracticeTests } from '../../services/firebase/practiceTests'
 import { generatePracticeTestFn, generateFlashcardsFn } from '../../services/firebase/functions'
 import { saveWrongTopics } from '../../services/firebase/practiceInsights'
+import { getStudyGuides } from '../../services/firebase/studyGuides'
+
+function parseGuideSections(content) {
+  if (!content) return []
+  return content.split('\n')
+    .filter(l => l.startsWith('## '))
+    .map(l => l.replace('## ', '').trim())
+    .filter(Boolean)
+}
 
 // Check if a question is answered correctly
 function isCorrect(q, answer) {
@@ -30,9 +39,14 @@ export default function PracticeTab({ cert, certId }) {
   const [error, setError] = useState('')
   const [activeTest, setActiveTest] = useState(null)
   const [questionCount, setQuestionCount] = useState(20)
+  const [allSections, setAllSections] = useState([])
+  const [selectedSections, setSelectedSections] = useState(new Set())
   const abortRef = useRef(null)
 
-  useEffect(() => { loadTests() }, [certId])
+  useEffect(() => {
+    loadTests()
+    loadSections()
+  }, [certId])
 
   const loadTests = async () => {
     setLoading(true)
@@ -42,6 +56,25 @@ export default function PracticeTab({ cert, certId }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const loadSections = async () => {
+    try {
+      const guides = await getStudyGuides(user.uid, certId)
+      if (guides.length > 0) {
+        setAllSections(parseGuideSections(guides[0].content))
+        setSelectedSections(new Set())
+      }
+    } catch (_) {}
+  }
+
+  const toggleSection = (s) => {
+    setSelectedSections(prev => {
+      const next = new Set(prev)
+      if (next.has(s)) next.delete(s)
+      else next.add(s)
+      return next
+    })
   }
 
   const handleGenerate = async () => {
@@ -55,6 +88,7 @@ export default function PracticeTab({ cert, certId }) {
         certName: cert.name,
         domains: cert.domains || [],
         questionCount,
+        focusSections: selectedSections.size > 0 ? [...selectedSections] : [],
       }, { signal: abortRef.current.signal })
       await loadTests()
     } catch (e) {
@@ -98,6 +132,13 @@ export default function PracticeTab({ cert, certId }) {
         </div>
       </div>
 
+      <SectionPicker
+        sections={allSections}
+        selected={selectedSections}
+        onToggle={toggleSection}
+        onSelectAll={() => setSelectedSections(new Set())}
+      />
+
       {generating && (
         <div className="generating-card" style={{ marginBottom: 24 }}>
           <div className="loading-spinner" style={{ width: 32, height: 32, borderWidth: 3 }} />
@@ -122,7 +163,11 @@ export default function PracticeTab({ cert, certId }) {
             <button className="btn-primary btn-lg" onClick={handleGenerate} disabled={generating}>
               {generating ? '⏳ Generating…' : '✨ Generate Practice Test'}
             </button>
-            <p className="generate-note">20 questions · ~60 seconds · All {cert.acronym} domains</p>
+            <p className="generate-note">
+              {selectedSections.size > 0
+                ? `${questionCount} questions · ${selectedSections.size} section${selectedSections.size > 1 ? 's' : ''} selected · ~60 seconds`
+                : `20 questions · ~60 seconds · All ${cert.acronym} domains`}
+            </p>
           </div>
         </div>
       ) : (
@@ -136,9 +181,42 @@ export default function PracticeTab({ cert, certId }) {
   )
 }
 
+function SectionPicker({ sections, selected, onToggle, onSelectAll }) {
+  if (sections.length === 0) return null
+  const allSelected = selected.size === 0
+  return (
+    <div className="section-picker">
+      <span className="section-picker-label">Focus questions on:</span>
+      <div className="section-chips">
+        <button
+          className={`section-chip${allSelected ? ' active' : ''}`}
+          onClick={onSelectAll}
+        >
+          All sections
+        </button>
+        {sections.map(s => (
+          <button
+            key={s}
+            className={`section-chip${selected.has(s) ? ' active' : ''}`}
+            onClick={() => onToggle(s)}
+          >
+            {s}
+          </button>
+        ))}
+      </div>
+      {!allSelected && (
+        <p className="section-picker-note">
+          {selected.size} of {sections.length} section{selected.size !== 1 ? 's' : ''} selected — all materials still used for answer validation
+        </p>
+      )}
+    </div>
+  )
+}
+
 function TestCard({ test, index, onStart }) {
   const date = test.generatedAt?.toDate?.()?.toLocaleDateString() || 'Recently'
   const types = [...new Set((test.questions || []).map(q => q.type).filter(Boolean))]
+  const focusSections = test.focusSections || []
   return (
     <div className="test-card">
       <div className="test-card-info">
@@ -148,6 +226,9 @@ function TestCard({ test, index, onStart }) {
           {types.includes('single') && <span className="domain-chip">Single-answer</span>}
           {types.includes('multiple') && <span className="domain-chip">Multi-select</span>}
           {types.includes('truefalse') && <span className="domain-chip">True/False</span>}
+          {focusSections.length > 0 && focusSections.map(s => (
+            <span key={s} className="domain-chip focus-chip">{s}</span>
+          ))}
         </div>
       </div>
       <div className="test-card-actions">

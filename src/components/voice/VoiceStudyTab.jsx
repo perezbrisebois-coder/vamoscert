@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { getTextbook } from '../../services/firebase/textbook'
+import { getMaterials } from '../../services/firebase/materials'
 import { voiceChatFn } from '../../services/firebase/functions'
 
 const isSpeechSupported = () =>
@@ -26,11 +27,32 @@ export default function VoiceStudyTab({ cert, certId }) {
 
   const setStatusSynced = (s) => { statusRef.current = s; setStatus(s) }
 
-  // Load textbook context on mount
+  // Load study guide + all materials as context on mount
   useEffect(() => {
-    getTextbook(user.uid, certId).then(tb => {
-      if (tb?.content) setStudyContext(tb.content.substring(0, 12000))
-    })
+    const loadContext = async () => {
+      const [tb, materials] = await Promise.all([
+        getTextbook(user.uid, certId),
+        getMaterials(user.uid, certId),
+      ])
+
+      const parts = []
+
+      if (tb?.content) {
+        parts.push(`=== Study Guide ===\n${tb.content.substring(0, 10000)}`)
+      }
+
+      const readyMaterials = materials.filter(m => m.status === 'ready' && m.extractedText?.trim())
+      for (const m of readyMaterials) {
+        const used = parts.join('\n\n').length
+        const remaining = 25000 - used
+        if (remaining < 500) break
+        const label = m.name || m.type || 'Material'
+        parts.push(`=== ${label} ===\n${m.extractedText.substring(0, Math.min(remaining - 100, 5000))}`)
+      }
+
+      setStudyContext(parts.join('\n\n'))
+    }
+    loadContext()
   }, [certId])
 
   // Auto-scroll transcript

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAuth } from '../../hooks/useAuth'
 import { getFlashcardSets } from '../../services/firebase/flashcards'
 import { getTextbook } from '../../services/firebase/textbook'

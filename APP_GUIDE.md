@@ -45,7 +45,7 @@ VamosCert is an AI-powered study platform for certifications and classes. Upload
 
 #### Anthropic (Claude)
 - **Used for:** Study guide generation, outline, flashcards, practice tests, assignment generation, AI tutor chat, syllabus topic parsing
-- **Models:** `claude-sonnet-4-6` (primary), `claude-haiku-4-5` (faster tasks)
+- **Models:** `claude-opus-4-8` (study guide/glossary/assignment generation, AI tutor), `claude-sonnet-4-6` (practice test generation, syllabus parsing), `claude-haiku-4-5-20251001` (lighter tasks)
 - **API key env var:** `ANTHROPIC_API_KEY` (set in Cloud Functions config)
 
 #### OpenAI (GPT-4o)
@@ -205,4 +205,15 @@ firebase deploy
 
 **Why it's better than just reading:**
 Active recall (being asked questions) is the most effective study method. VamosCert forces that automatically by generating practice questions and an interactive tutor from your specific materials.
+
+---
+
+## Changelog
+
+### 2026-06-15 — Updated Claude Opus model to claude-opus-4-8
+
+`functions/index.js` now uses `claude-opus-4-8` (Opus 4.8) for all heavy generation tasks
+(study guide, glossary, assignment generation, AI tutor) instead of `claude-opus-4-6`, which
+was an earlier version. `claude-sonnet-4-6` and `claude-haiku-4-5-20251001` were already
+up-to-date and unchanged.
 

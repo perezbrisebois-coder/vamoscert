@@ -264,7 +264,7 @@ Write the complete, thorough Comprehensive Study Guide now. Be exhaustive — co
 
       let textbookContent = ''
       const textbookStream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: isOutline ? 10000 : 32000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -394,7 +394,7 @@ Generate the complete glossary now:`
 
       let glossaryContent = ''
       const stream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 32000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -444,7 +444,7 @@ exports.generatePracticeTest = onRequest(
     try {
       const raw = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {})
       const body = raw.data || raw
-      const { userId, certId, certName, domains, questionCount = 20, weakTopics = [] } = body
+      const { userId, certId, certName, domains, questionCount = 20, weakTopics = [], focusSections = [] } = body
       const db = admin.firestore()
 
       // Load saved weak topics from previous tests
@@ -483,6 +483,24 @@ exports.generatePracticeTest = onRequest(
         .collection('textbooks').doc('main').get()
       const studyGuideText = textbookSnap.exists ? textbookSnap.data().content?.substring(0, 20000) || '' : ''
 
+      // If focusSections provided, fetch the latest study guide and extract matching sections
+      let focusSectionContent = ''
+      if (focusSections.length > 0) {
+        try {
+          const guidesSnap = await db
+            .collection('users').doc(userId)
+            .collection('certifications').doc(certId)
+            .collection('studyGuides')
+            .orderBy('generatedAt', 'desc')
+            .limit(1)
+            .get()
+          if (!guidesSnap.empty) {
+            const guideContent = guidesSnap.docs[0].data().content || ''
+            focusSectionContent = extractSections(guideContent, focusSections)
+          }
+        } catch (_) {}
+      }
+
       // Total content budget: ~60,000 chars to stay within GPT-4o's token limit
       // Practice tests get a dedicated slice — they drive topic weights and question format
       // Remaining budget: study guide (20k) + primary 80% + secondary 20%
@@ -501,38 +519,51 @@ exports.generatePracticeTest = onRequest(
 
       const contentForQuestions = primaryText + (secondaryText ? '\n\n' + secondaryText : '')
 
-      const domainsText = domains?.length ? domains.join(', ') : 'all exam domains'
+      const isFocused = focusSections.length > 0
+
+      const domainsText = isFocused
+        ? focusSections.join(', ')
+        : (domains?.length ? domains.join(', ') : 'all exam domains')
 
       const weakTopicsNote = savedWeakTopics.length > 0
         ? `\nPRIORITY TOPICS (student has struggled with these — include similar but NOT identical questions on these topics, roughly 30-40% of the test):\n${savedWeakTopics.slice(0, 15).map(t => `- ${t.topic} (${t.domain}) — wrong ${t.count} time${t.count > 1 ? 's' : ''}`).join('\n')}\n`
         : ''
 
+      // When focused, pass the extracted section content first (as primary), then the full guide for overlap context
+      const studyGuideForPrompt = isFocused
+        ? (focusSectionContent
+            ? `FOCUS SECTION CONTENT (primary source — most questions should come from here):\n${focusSectionContent.substring(0, 16000)}\n\nFULL STUDY GUIDE (context only — use for naturally overlapping concepts):\n${studyGuideText.substring(0, 6000)}`
+            : `STUDY GUIDE (full topic backbone):\n${studyGuideText}`)
+        : `STUDY GUIDE (full topic backbone):\n${studyGuideText}`
+
+      const topicWeightingSection = isFocused
+        ? `SECTION FOCUS:\nThe student wants to practice primarily on these sections:\n${focusSections.map(s => `  - ${s}`).join('\n')}\n\nAim for roughly 80% of questions to directly test concepts from these sections. The remaining 20% may cover closely related concepts from other sections IF those concepts appear naturally within the focus section content above — but always frame questions from the perspective of the selected sections.\n\nDo NOT write questions that are primarily about a different section just because it has some connection. The selected sections must be the clear primary focus.\n\nDistribute questions proportionally across the selected sections based on content depth.`
+        : practiceTestMaterials.length > 0
+          ? `The OFFICIAL PRACTICE TESTS section below contains tagged exam materials. Perform this two-step analysis:\nStep 1 — Count how many questions each topic/concept receives across all practice tests. A topic with 2 questions is twice as important as one with 1.\nStep 2 — Identify topics in the study guide or primary materials NOT covered by the practice tests.\nAllocate your ${questionCount} questions proportionally: practice test topic frequency is the PRIMARY signal. Fill remaining slots with study guide topics weighted by coverage depth.`
+          : `No practice test materials have been tagged. Analyze the STUDY GUIDE to identify topic distribution and allocate questions proportionally by coverage depth across domains: ${domainsText}.`
+
+      const scenarioRatioSection = isFocused
+        ? `Use an approximate 60% scenario / 40% knowledge-recall ratio.`
+        : practiceTestMaterials.length > 0
+          ? `Analyze the OFFICIAL PRACTICE TESTS to determine the exact percentage of scenario-based vs. knowledge-recall questions. Generate new questions with that SAME ratio.`
+          : `Use an approximate 60% scenario / 40% knowledge-recall ratio as a reasonable default for ${certName}.`
+
       // Step 1: GPT-4o generates questions
-      const gptPrompt = `You are an expert ${certName} certification exam writer. Generate exactly ${questionCount} practice questions from the study materials below.
+      const gptPrompt = `You are an expert ${certName} certification exam writer. Generate exactly ${questionCount} practice questions.
 ${weakTopicsNote}
-GROUNDING RULE: Every question, correct answer, and explanation MUST be directly supported by the provided study materials. Do NOT invent facts, frameworks, or details not present in the materials. If a concept is mentioned in the materials, use exactly how it is described there.
+TOPIC SCOPE — CRITICAL:
+${topicWeightingSection}
 
-SOURCE PRIORITY:
-- OFFICIAL PRACTICE TESTS (tagged) are the primary signal for both topic selection and question format
-- PRIMARY MATERIALS provide the detailed content to write questions from
-- SECONDARY MATERIALS provide supporting context — only use for topics that already appear in the practice tests
-- STUDY GUIDE provides full topic coverage as a backbone
+GROUNDING RULES:
+- Correct answers and explanations MUST be grounded in the provided study materials.
+- For scenario questions: you MAY draw on real-world context, realistic organizations, and factual industry knowledge to construct believable fact patterns. The scenario setup can use general knowledge; the CORRECT ANSWER must still be anchored to the study materials.
+- For knowledge-recall questions: both the question and answer must come directly from the study materials.
 
-TOPIC WEIGHTING — CRITICAL:
-${practiceTestMaterials.length > 0
-  ? `The OFFICIAL PRACTICE TESTS section below contains tagged exam materials. Perform this two-step analysis:
-Step 1 — Count how many questions each topic/concept receives across all practice tests. A topic with 2 questions is twice as important as one with 1.
-Step 2 — Identify topics in the study guide or primary materials NOT covered by the practice tests.
-Allocate your ${questionCount} questions proportionally: practice test topic frequency is the PRIMARY signal. Fill remaining slots with study guide topics weighted by coverage depth.`
-  : `No practice test materials have been tagged. Analyze the STUDY GUIDE to identify topic distribution and allocate questions proportionally by coverage depth across domains: ${domainsText}.`}
-
-SCENARIO vs KNOWLEDGE-RECALL RATIO — CRITICAL:
-${practiceTestMaterials.length > 0
-  ? `Analyze the OFFICIAL PRACTICE TESTS to determine the exact percentage of scenario-based vs. knowledge-recall questions. Generate new questions with that SAME ratio.`
-  : `Use an approximate 60% scenario / 40% knowledge-recall ratio as a reasonable default for ${certName}.`}
+SCENARIO vs KNOWLEDGE-RECALL RATIO:
+${scenarioRatioSection}
 
 Definitions:
-- "scenario": presents a real-world situation or organizational context — asks what to do, what applies, or what is happening. Example opener: "A company is implementing...", "An organization has deployed..."
+- "scenario": presents a real-world situation or organizational context — asks what to do, what applies, or what is happening. Example opener: "A company is implementing...", "An organization has deployed...", "A healthcare provider must..."
 - "knowledge-recall": directly tests a fact, definition, framework step, or list without a situational wrapper. Example opener: "Which of the following is...", "What does X stand for?"
 
 Assign each generated question a "questionFormat" field: "scenario" or "knowledge-recall".
@@ -543,12 +574,13 @@ Question types to use:
 
 Requirements:
 - Mirror real ${certName} exam style
-- Distribute across these domains: ${domainsText}
+- ALL questions must be from this scope: ${domainsText}
 - Include a detailed explanation of why the correct answer is right, citing the source material
 - For each option, include a brief explanation of why it is correct or incorrect (optionExplanations array)
 - Vary difficulty (50% medium, 25% easy, 25% hard)
 - NO true/false questions
-- Add a "topic" field: 3-5 word label for the specific concept being tested (e.g. "NIST AI RMF functions", "bias mitigation strategies")
+- Add a "topic" field: 3-5 word label for the specific concept being tested
+- Set the "domain" field to the section/domain name from the scope list above
 
 Return ONLY valid JSON (no markdown):
 {
@@ -567,7 +599,7 @@ Return ONLY valid JSON (no markdown):
         "Incorrect — this applies to a different context..."
       ],
       "explanation": "...",
-      "domain": "...",
+      "domain": "${isFocused ? focusSections[0] : '...'}",
       "difficulty": "medium",
       "source": "primary|secondary"
     },
@@ -585,21 +617,20 @@ Return ONLY valid JSON (no markdown):
         "Incorrect — ..."
       ],
       "explanation": "...",
-      "domain": "...",
+      "domain": "${isFocused ? focusSections[0] : '...'}",
       "difficulty": "hard",
       "source": "primary"
     }
   ]
 }
 
-${practiceTestText ? `OFFICIAL PRACTICE TESTS (tagged by user — use for topic weights, format ratio, and question style):
+${!isFocused && practiceTestText ? `OFFICIAL PRACTICE TESTS (tagged by user — use for topic weights, format ratio, and question style):
 ${practiceTestText}
 
 ` : ''}PRIMARY MATERIALS (detailed content — write questions from this):
 ${contentForQuestions}
 
-STUDY GUIDE (full topic backbone):
-${studyGuideText}`
+${studyGuideForPrompt}`
 
       const gptResponse = await getOpenAI().chat.completions.create({
         model: 'gpt-4o',
@@ -622,41 +653,43 @@ ${studyGuideText}`
       }
 
       // Step 2: Claude reviews and validates questions against source materials
-      const reviewPrompt = `You are a ${certName} certification expert reviewing practice questions for accuracy against the SOURCE MATERIALS below.
-
-CRITICAL GROUNDING RULES:
-- Verify each question and every answer option against the SOURCE MATERIALS provided
+      const reviewPrompt = `You are a ${certName} certification expert reviewing practice questions for accuracy.
+${isFocused ? `\nSECTION FOCUS:\nThe student selected these sections as the primary focus: ${focusSections.join(', ')}.\nCheck that roughly 80% of questions are clearly about these sections. A question is acceptable if it tests a concept from a different section only when that concept appears naturally within the focus section content. If more than ~20% of questions are primarily about other sections, rewrite the most off-topic ones to fit within the focus sections. Do not rewrite questions that have a genuine connection to the focus sections even if they touch on related topics.\n` : ''}
+GROUNDING RULES:
+- Verify correct answers and explanations against the SOURCE MATERIALS provided
 - If a correct answer is NOT supported by the materials, fix it to match what the materials actually say
-- If an explanation contradicts or invents details not in the materials, correct it to be grounded in the source
-- Do NOT rely on general knowledge — use ONLY the provided materials as the source of truth
-- If a question references a concept not found in the materials, rewrite the question to use a concept that IS in the materials
-- For any fact you cannot verify in the materials, add "(based on general ${certName} knowledge)" to that explanation
+- For scenario questions: the scenario fact pattern may use real-world context — do NOT change realistic scenario setups. Only verify that the CORRECT ANSWER is material-grounded.
+- For knowledge-recall questions: both question and answer must come from the materials
+- For any answer you cannot verify in the materials, add "(based on general ${certName} knowledge)" to that explanation
 
-TOPIC DISTRIBUTION VERIFICATION — CRITICAL:
-${practiceTestText
-  ? `OFFICIAL PRACTICE TESTS are provided below. Count how many questions each topic received across those tests. Verify the submitted questions reflect that same proportional weighting. Rewrite or retopic borderline questions if a topic is significantly over- or under-represented.`
-  : `No practice test materials were tagged. Verify topics are distributed proportionally across the exam domains: ${domainsText}.`}
+TOPIC DISTRIBUTION VERIFICATION:
+${isFocused
+  ? `The primary focus is: ${focusSections.join(', ')}. Verify that roughly 80% of questions clearly test these sections. Questions touching related concepts from other sections are fine if they naturally arise from the focus section content. Rewrite only questions that are clearly off-topic (primarily about a different section with no real connection to the focus).`
+  : practiceTestText
+    ? `OFFICIAL PRACTICE TESTS are provided below. Count how many questions each topic received across those tests. Verify the submitted questions reflect that same proportional weighting. Rewrite or retopic borderline questions if a topic is significantly over- or under-represented.`
+    : `No practice test materials were tagged. Verify topics are distributed proportionally across the exam domains: ${domainsText}.`}
 
-QUESTION FORMAT VERIFICATION — CRITICAL:
-${practiceTestText
-  ? `Using the OFFICIAL PRACTICE TESTS below, verify the scenario vs. knowledge-recall ratio is maintained in the submitted questions. Correct any mislabeled "questionFormat" fields.`
+QUESTION FORMAT VERIFICATION:
+${!isFocused && practiceTestText
+  ? `Using the OFFICIAL PRACTICE TESTS below, verify the scenario vs. knowledge-recall ratio is maintained. Correct any mislabeled "questionFormat" fields.`
   : `Verify "questionFormat" labels are accurate: "scenario" = situational context, "knowledge-recall" = direct fact/definition test.`}
 
 For each question also:
 - Ensure optionExplanations are accurate and clearly explain why each option is right or wrong
 - Keep the same JSON structure including topic, questionFormat, optionExplanations, and all other fields
 
-${practiceTestText ? `OFFICIAL PRACTICE TESTS (source of truth for topic weights and format ratio):
+${!isFocused && practiceTestText ? `OFFICIAL PRACTICE TESTS (source of truth for topic weights and format ratio):
 ${practiceTestText.substring(0, 15000)}
 
 ` : ''}SOURCE MATERIALS (facts to verify against):
 ${contentForQuestions.substring(0, 15000)}
+${isFocused && focusSectionContent ? `\nFOCUS SECTION CONTENT (primary source for section-scoped tests):\n${focusSectionContent.substring(0, 8000)}` : ''}
 
 Return ONLY valid JSON with the same structure as input (no markdown):
 ${JSON.stringify({ questions }, null, 2)}`
 
       const reviewResponse = await getAnthropic().messages.create({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 8000,
         messages: [{ role: 'user', content: reviewPrompt }],
       })
@@ -684,6 +717,7 @@ ${JSON.stringify({ questions }, null, 2)}`
         questions: reviewedQuestions,
         questionCount: reviewedQuestions.length,
         domains: [...new Set(reviewedQuestions.map(q => q.domain).filter(Boolean))],
+        focusSections: focusSections.length > 0 ? focusSections : [],
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),
         status: 'ready',
       }
@@ -785,7 +819,7 @@ ${contentText}
 Generate the complete study guide outline now:`
 
       const message = await getAnthropic().messages.create({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 8192,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -879,7 +913,7 @@ ${contentText}
 Generate the outline now:`
 
       const message = await getAnthropic().messages.create({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -984,7 +1018,7 @@ Generate all flashcards now using the ===CARD=== delimiter format above:`
 
       let flashcardText = ''
       const flashcardStream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 32000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -1093,7 +1127,7 @@ ${studyContext || '(No study context provided — use your general knowledge of 
 
       let responseText = ''
       const stream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 300,
         system: systemPrompt,
         messages,
@@ -1321,7 +1355,7 @@ exports.generateAssignment = onRequest(
     // Run Claude Opus and GPT-4o in parallel
     const [claudeResult, gptResult] = await Promise.allSettled([
       getAnthropic().messages.create({
-        model: 'claude-opus-4-6',
+        model: 'claude-opus-4-8',
         max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
@@ -1649,6 +1683,22 @@ exports.analyzeVideoFrames = onRequest(
 )
 
 // ─── HELPER ───────────────────────────────────────────────────────────────────
+function extractSections(markdown, titles) {
+  const titleSet = new Set(titles.map(t => t.trim()))
+  const lines = markdown.split('\n')
+  const result = []
+  let inSection = false
+  for (const line of lines) {
+    if (line.startsWith('## ')) {
+      inSection = titleSet.has(line.replace('## ', '').trim())
+    } else if (line.startsWith('# ')) {
+      inSection = false
+    }
+    if (inSection) result.push(line)
+  }
+  return result.join('\n')
+}
+
 function parseIntoSections(markdown) {
   const lines = markdown.split('\n')
   const sections = []
