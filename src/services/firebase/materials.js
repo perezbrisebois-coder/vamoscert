@@ -76,6 +76,7 @@ export const uploadFile = (userId, certId, file, onProgress) => {
 export const MATERIAL_TYPES = {
   pdf: { label: 'PDF', icon: '📄', accept: '.pdf', color: '#EF4444' },
   word: { label: 'Word', icon: '📝', accept: '.doc,.docx', color: '#2563EB' },
+  epub: { label: 'ePub', icon: '📚', accept: '.epub', color: '#6366F1' },
   webpage: { label: 'Web Page', icon: '🌐', accept: null, color: '#10B981' },
   video: { label: 'Video', icon: '🎬', accept: '.mp4,.mov,.avi,.mkv', color: '#8B5CF6' },
   slides: { label: 'Slides', icon: '📊', accept: '.ppt,.pptx', color: '#F59E0B' },

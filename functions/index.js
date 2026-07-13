@@ -860,16 +860,21 @@ exports.generateOutline = onRequest(
     try {
       const raw = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {})
       const body = raw.data || raw
-      const { userId, certId, certName, selectedMaterialIds, pageCount } = body
+      const { userId, certId, certName, selectedMaterialIds, minPages, maxPages, pageCount } = body
 
       if (!selectedMaterialIds || selectedMaterialIds.length === 0) {
         res.status(400).json({ error: 'No materials selected.' })
         return
       }
 
-      const PAGE_WORDS = { 2: 700, 5: 1750, 10: 3500, 20: 7000, 30: 10500 }
-      const targetWords = PAGE_WORDS[pageCount] || 1750
-      const maxTokens = Math.round(targetWords * 1.6)
+      // Support both legacy pageCount and new minPages/maxPages range
+      const WORDS_PER_PAGE = 350
+      const resolvedMin = minPages || (pageCount ? Math.max(1, pageCount - 2) : 3)
+      const resolvedMax = maxPages || pageCount || 5
+      const targetMinWords = Math.round(resolvedMin * WORDS_PER_PAGE)
+      const targetMaxWords = Math.round(resolvedMax * WORDS_PER_PAGE)
+      // Give Claude enough room to hit the upper bound; cap at model limit
+      const maxTokens = Math.min(32000, Math.round(targetMaxWords * 1.8))
 
       const db = admin.firestore()
       const materialsSnap = await db
@@ -887,15 +892,18 @@ exports.generateOutline = onRequest(
         return
       }
 
-      // Budget content the same way the study guide does — up to 100k chars total
-      const budgetPerDoc = Math.floor(100000 / selected.length)
+      // Scale content budget with target size — larger outlines need more source material
+      const contentBudget = Math.min(400000, Math.max(100000, targetMaxWords * 12))
+      const budgetPerDoc = Math.floor(contentBudget / selected.length)
       const contentText = selected
         .map(m => `[${m.name}]\n${(m.extractedText || '').substring(0, budgetPerDoc)}`)
         .join('\n\n---\n\n')
 
-      const prompt = `You are an expert ${certName} certification tutor. Your task is to produce a concise, hierarchical outline of the provided study materials.
+      const prompt = `You are an expert ${certName} certification tutor. Your task is to produce a thorough, hierarchical outline of the provided study materials.
 
-TARGET LENGTH: approximately ${targetWords} words (${pageCount} pages). Stay within this limit — be selective and prioritize the most exam-relevant content.
+TARGET LENGTH: ${targetMinWords}–${targetMaxWords} words (${resolvedMin}–${resolvedMax} pages). You MUST synthesize and cover ALL key topics from the materials — do NOT stop early or truncate content. If the materials are rich, expand each section with sufficient detail to reach the lower bound of the range. If they are lean, summarize precisely and stop at the upper bound.
+
+SYNTHESIS RULE: Never cut off a topic mid-way. Every domain and subtopic present in the materials must appear in the outline, even if it means using fewer bullet points per section to stay within the word limit. Prioritize breadth (full coverage) over depth (lengthy explanations).
 
 OUTPUT FORMAT — use this structure:
 # [Topic or Domain Name]
@@ -903,14 +911,14 @@ OUTPUT FORMAT — use this structure:
 - Key point with a brief, exam-ready explanation
   - Sub-point if needed
 
-Keep bullet points tight (one sentence max). No lengthy paragraphs. Every line should be something a student would want to memorize or reference quickly.
+Keep bullet points tight (one concise sentence). No lengthy paragraphs. Every line should be something a student would want to memorize or reference quickly.
 
 End with a single "## Key Terms" section listing the most critical definitions as: **Term** — definition.
 
 MATERIALS:
 ${contentText}
 
-Generate the outline now:`
+Generate the complete outline now, covering every major topic from the materials within the ${resolvedMin}–${resolvedMax} page target:`
 
       const message = await getAnthropic().messages.create({
         model: 'claude-opus-4-8',
@@ -927,7 +935,9 @@ Generate the outline now:`
       await outlineRef.set({
         certName, certId,
         content,
-        pageCount,
+        minPages: resolvedMin,
+        maxPages: resolvedMax,
+        pageCount: resolvedMax, // keep for backward compat with old outline cards
         selectedMaterialIds,
         materialCount: selected.length,
         generatedAt: admin.firestore.FieldValue.serverTimestamp(),

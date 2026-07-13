@@ -210,6 +210,25 @@ Active recall (being asked questions) is the most effective study method. VamosC
 
 ## Changelog
 
+### 2026-07-13 — ePub support + Outline page ranges
+
+**ePub document parsing**
+- Materials tab now accepts `.epub` files (drag-drop or click-to-browse)
+- Text is extracted client-side: unzips the ePub archive, follows OPF spine reading order, strips HTML → clean plain text
+- ePub also accepted in Syllabus → Import from document (extracts topics via Claude)
+- `src/services/ai/extractor.js` — added `extractFromEpub()` using JSZip
+- `src/services/firebase/materials.js` — added `epub` to `MATERIAL_TYPES`
+- `src/components/materials/MaterialsTab.jsx` — file detection, extraction, and accept strings updated
+
+**Outline page range selector**
+- Replaced fixed page-count buttons (2/5/10/20/30) with 9 range presets: 2–5, 5–10, 10–20, 20–30, 30–40, 40–50, 60–70, 70–80, 80–90 pages
+- Added "Custom…" option with min/max page inputs for any range
+- Hint below selector shows estimated word count for chosen range
+- Backend (`functions/index.js` → `generateOutline`): accepts `minPages`/`maxPages`, scales content budget proportionally, caps `max_tokens` at 32k, and instructs Claude to synthesize for full coverage (not truncate) within the range
+- Old `pageCount` parameter still accepted for backward compatibility with existing outline cards
+
+---
+
 ### 2026-06-15 — Updated Claude Opus model to claude-opus-4-8
 
 `functions/index.js` now uses `claude-opus-4-8` (Opus 4.8) for all heavy generation tasks

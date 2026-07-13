@@ -43,6 +43,7 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
     const name = file.name.toLowerCase()
     if (name.endsWith('.pdf')) return 'pdf'
     if (name.endsWith('.doc') || name.endsWith('.docx')) return 'word'
+    if (name.endsWith('.epub')) return 'epub'
     if (name.endsWith('.ppt') || name.endsWith('.pptx')) return 'slides'
     if (name.match(/\.(mp4|mov|avi|mkv|webm)$/)) return 'video'
     return 'pdf'
@@ -77,7 +78,7 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
       })
 
       let extractedText = ''
-      if (type === 'word' || type === 'pdf') {
+      if (type === 'word' || type === 'pdf' || type === 'epub') {
         setMaterials(prev => prev.map(m =>
           m.id === materialId ? { ...m, status: 'extracting', progress: 100 } : m
         ))
@@ -299,13 +300,13 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
               ref={fileInputRef}
               type="file"
               multiple
-              accept=".pdf,.doc,.docx,.ppt,.pptx,.mp4,.mov,.avi,.mkv"
+              accept=".pdf,.doc,.docx,.epub,.ppt,.pptx,.mp4,.mov,.avi,.mkv"
               style={{ display: 'none' }}
               onChange={(e) => handleFiles(e.target.files)}
             />
             <div className="drop-zone-icon">📂</div>
             <p className="drop-zone-title">Drop files here or click to browse</p>
-            <p className="drop-zone-sub">PDF, Word, PowerPoint, Video</p>
+            <p className="drop-zone-sub">PDF, Word, ePub, PowerPoint, Video</p>
           </div>
 
           <div className="web-url-section">
@@ -421,10 +422,12 @@ function SyllabusTab({ cert, userId, certId, onSyllabusChange }) {
     setImporting(true)
     setImportError('')
     try {
-      const type = file.name.toLowerCase().endsWith('.pdf') ? 'pdf'
-        : (file.name.toLowerCase().endsWith('.doc') || file.name.toLowerCase().endsWith('.docx')) ? 'word'
+      const name = file.name.toLowerCase()
+      const type = name.endsWith('.pdf') ? 'pdf'
+        : (name.endsWith('.doc') || name.endsWith('.docx')) ? 'word'
+        : name.endsWith('.epub') ? 'epub'
         : null
-      if (!type) { setImportError('Upload a PDF or Word document.'); return }
+      if (!type) { setImportError('Upload a PDF, Word, or ePub document.'); return }
 
       const text = await extractText(file, type)
       if (!text?.trim()) { setImportError('Could not read text from this file.'); return }
@@ -456,7 +459,7 @@ function SyllabusTab({ cert, userId, certId, onSyllabusChange }) {
           <input
             ref={fileInputRef}
             type="file"
-            accept=".pdf,.doc,.docx"
+            accept=".pdf,.doc,.docx,.epub"
             style={{ display: 'none' }}
             onChange={e => e.target.files[0] && handleImportFile(e.target.files[0])}
           />
@@ -464,7 +467,7 @@ function SyllabusTab({ cert, userId, certId, onSyllabusChange }) {
             className="btn-ghost btn-sm"
             onClick={() => fileInputRef.current?.click()}
             disabled={importing}
-            title="Upload your syllabus PDF or Word doc — Claude will extract the topics automatically"
+            title="Upload your syllabus PDF, Word, or ePub doc — Claude will extract the topics automatically"
           >
             {importing ? '⏳ Importing…' : '📄 Import from document'}
           </button>

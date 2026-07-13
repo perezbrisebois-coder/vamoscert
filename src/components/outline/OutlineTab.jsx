@@ -7,13 +7,19 @@ import { generateOutlineFn } from '../../services/firebase/functions'
 
 marked.use({ gfm: true, breaks: false })
 
-const PAGE_OPTIONS = [
-  { pages: 2,  label: '2 pages',  words: 700 },
-  { pages: 5,  label: '5 pages',  words: 1750 },
-  { pages: 10, label: '10 pages', words: 3500 },
-  { pages: 20, label: '20 pages', words: 7000 },
-  { pages: 30, label: '30 pages', words: 10500 },
+const RANGE_PRESETS = [
+  { min: 2,  max: 5,  label: '2–5 pages' },
+  { min: 5,  max: 10, label: '5–10 pages' },
+  { min: 10, max: 20, label: '10–20 pages' },
+  { min: 20, max: 30, label: '20–30 pages' },
+  { min: 30, max: 40, label: '30–40 pages' },
+  { min: 40, max: 50, label: '40–50 pages' },
+  { min: 60, max: 70, label: '60–70 pages' },
+  { min: 70, max: 80, label: '70–80 pages' },
+  { min: 80, max: 90, label: '80–90 pages' },
 ]
+
+const WORDS_PER_PAGE = 350
 
 export default function OutlineTab({ cert, certId }) {
   const { user } = useAuth()
@@ -24,7 +30,10 @@ export default function OutlineTab({ cert, certId }) {
   const [error, setError] = useState('')
   const [activeOutline, setActiveOutline] = useState(null)
   const [selectedIds, setSelectedIds] = useState(new Set())
-  const [pageCount, setPageCount] = useState(5)
+  const [selectedPreset, setSelectedPreset] = useState(1) // index into RANGE_PRESETS
+  const [customMin, setCustomMin] = useState('')
+  const [customMax, setCustomMax] = useState('')
+  const [useCustom, setUseCustom] = useState(false)
 
   useEffect(() => { loadAll() }, [certId])
 
@@ -52,8 +61,20 @@ export default function OutlineTab({ cert, certId }) {
     })
   }
 
+  const getRange = () => {
+    if (useCustom) {
+      const min = parseInt(customMin, 10) || 10
+      const max = parseInt(customMax, 10) || 20
+      return { minPages: Math.min(min, max), maxPages: Math.max(min, max) }
+    }
+    const preset = RANGE_PRESETS[selectedPreset]
+    return { minPages: preset.min, maxPages: preset.max }
+  }
+
   const handleGenerate = async () => {
     if (selectedIds.size === 0) { setError('Select at least one material.'); return }
+    const { minPages, maxPages } = getRange()
+    if (maxPages < 1) { setError('Please set a valid page range.'); return }
     setError('')
     setGenerating(true)
     try {
@@ -62,7 +83,8 @@ export default function OutlineTab({ cert, certId }) {
         certId,
         certName: cert.name,
         selectedMaterialIds: Array.from(selectedIds),
-        pageCount,
+        minPages,
+        maxPages,
       })
       await loadAll()
     } catch (e) {
@@ -81,7 +103,7 @@ export default function OutlineTab({ cert, certId }) {
       <div className="practice-header">
         <div>
           <h2>Outlines</h2>
-          <p className="text-muted">Select materials and a target length to generate a focused outline — from a quick 2-page summary to a detailed 30-page reference.</p>
+          <p className="text-muted">Select materials and a page range to generate a focused outline. Claude synthesizes all key topics to fit within your range — it won't cut off content.</p>
         </div>
       </div>
 
@@ -120,18 +142,53 @@ export default function OutlineTab({ cert, certId }) {
 
             <div style={{ marginBottom: 20 }}>
               <h3 style={{ marginBottom: 12, fontSize: 15 }}>Target length</h3>
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                {PAGE_OPTIONS.map(opt => (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
+                {RANGE_PRESETS.map((preset, i) => (
                   <button
-                    key={opt.pages}
-                    onClick={() => setPageCount(opt.pages)}
-                    className={pageCount === opt.pages ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'}
-                    style={{ minWidth: 80 }}
+                    key={i}
+                    onClick={() => { setSelectedPreset(i); setUseCustom(false) }}
+                    className={!useCustom && selectedPreset === i ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'}
+                    style={{ minWidth: 90 }}
                   >
-                    {opt.label}
+                    {preset.label}
                   </button>
                 ))}
+                <button
+                  onClick={() => setUseCustom(true)}
+                  className={useCustom ? 'btn-primary btn-sm' : 'btn-ghost btn-sm'}
+                  style={{ minWidth: 90 }}
+                >
+                  Custom…
+                </button>
               </div>
+              {useCustom && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 8 }}>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Min pages"
+                    value={customMin}
+                    onChange={e => setCustomMin(e.target.value)}
+                    style={{ width: 100, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 14 }}
+                  />
+                  <span style={{ color: 'var(--text-muted)' }}>to</span>
+                  <input
+                    type="number"
+                    min="1"
+                    placeholder="Max pages"
+                    value={customMax}
+                    onChange={e => setCustomMax(e.target.value)}
+                    style={{ width: 100, padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 14 }}
+                  />
+                  <span style={{ color: 'var(--text-muted)', fontSize: 13 }}>pages</span>
+                </div>
+              )}
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
+                {(() => {
+                  const { minPages, maxPages } = getRange()
+                  return `Claude will synthesize all key content to fit within ${minPages}–${maxPages} pages (~${(minPages * WORDS_PER_PAGE).toLocaleString()}–${(maxPages * WORDS_PER_PAGE).toLocaleString()} words).`
+                })()}
+              </p>
             </div>
 
             {error && <div className="alert-error" style={{ marginBottom: 12 }}>{error}<button onClick={() => setError('')}>×</button></div>}
@@ -141,7 +198,10 @@ export default function OutlineTab({ cert, certId }) {
               onClick={handleGenerate}
               disabled={generating || selectedIds.size === 0}
             >
-              {generating ? '⏳ Generating…' : `✨ Generate ${PAGE_OPTIONS.find(o => o.pages === pageCount)?.label} Outline`}
+              {generating ? '⏳ Generating…' : (() => {
+                const { minPages, maxPages } = getRange()
+                return `✨ Generate ${minPages}–${maxPages} Page Outline`
+              })()}
             </button>
 
             {generating && (
@@ -172,10 +232,13 @@ export default function OutlineTab({ cert, certId }) {
 
 function OutlineCard({ outline, index, onOpen }) {
   const date = outline.generatedAt?.toDate?.()?.toLocaleDateString() || 'Recently'
+  const pageLabel = outline.minPages && outline.maxPages
+    ? `${outline.minPages}–${outline.maxPages} pages`
+    : outline.pageCount ? `${outline.pageCount} pages` : 'outline'
   return (
     <div className="test-card">
       <div className="test-card-info">
-        <h3>📝 Outline #{index} — {outline.pageCount} pages</h3>
+        <h3>📝 Outline #{index} — {pageLabel}</h3>
         <p className="text-muted">{outline.wordCount?.toLocaleString()} words · {outline.materialCount} material{outline.materialCount !== 1 ? 's' : ''} · {date}</p>
       </div>
       <div className="test-card-actions">
@@ -204,7 +267,12 @@ function OutlineReader({ outline, cert, onBack }) {
       <div className="test-topbar">
         <button className="btn-ghost btn-sm" onClick={onBack}>← Back to Outlines</button>
         <div className="test-progress">
-          📝 Outline · {outline.pageCount} pages · {outline.wordCount?.toLocaleString()} words
+          {(() => {
+            const pageLabel = outline.minPages && outline.maxPages
+              ? `${outline.minPages}–${outline.maxPages} pages`
+              : outline.pageCount ? `${outline.pageCount} pages` : 'outline'
+            return `📝 Outline · ${pageLabel} · ${outline.wordCount?.toLocaleString()} words`
+          })()}
         </div>
         <button className="btn-ghost btn-sm" onClick={handlePrint}>⬇️ Print / PDF</button>
       </div>
