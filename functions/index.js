@@ -26,6 +26,23 @@ const getOpenAI = () => {
   return _openai
 }
 
+// Extracted text lives in Storage (Firestore caps a document field at ~1MiB — see
+// uploadExtractedText in src/services/firebase/materials.js), so any code that reads
+// material docs directly from Firestore must hydrate extractedText from Storage itself.
+const hydrateExtractedText = async (materials) => {
+  const bucket = admin.storage().bucket()
+  return Promise.all(materials.map(async (m) => {
+    if (m.extractedText || !m.extractedTextPath) return m
+    try {
+      const [buf] = await bucket.file(m.extractedTextPath).download()
+      return { ...m, extractedText: buf.toString('utf8') }
+    } catch (e) {
+      console.warn('Failed to hydrate extractedText for material', m.id, ':', e.message)
+      return m
+    }
+  }))
+}
+
 const ALLOWED_EMAILS = ['cperezfowler@gmail.com', 'perezbrisebois@gmail.com']
 
 // ─── CORS + AUTH MIDDLEWARE ───────────────────────────────────────────────────
@@ -87,9 +104,9 @@ exports.generateTextbook = onRequest(
         .collection('certifications').doc(certId)
         .collection('materials').get()
 
-      const materials = materialsSnap.docs
+      const materials = await hydrateExtractedText(materialsSnap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(m => m.status === 'ready')
+        .filter(m => m.status === 'ready'))
 
       if (materials.length === 0) {
         res.status(400).json({ error: 'No ready materials found.' })
@@ -467,7 +484,7 @@ exports.generatePracticeTest = onRequest(
         .collection('certifications').doc(certId)
         .collection('materials').get()
 
-      const allMaterials = materialsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.status === 'ready')
+      const allMaterials = await hydrateExtractedText(materialsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.status === 'ready'))
       // Three tiers: practice-test tagged (explicit exam source), primary (study depth), secondary (context)
       const practiceTestMaterials = allMaterials.filter(m => m.examRole === 'practice-test')
       const primaryMaterials = allMaterials.filter(m => m.examRole !== 'practice-test' && m.priority !== 'secondary')
@@ -760,7 +777,7 @@ exports.generateStudyGuide = onRequest(
         .collection('certifications').doc(certId)
         .collection('materials').get()
 
-      const allMaterials = materialsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.status === 'ready')
+      const allMaterials = await hydrateExtractedText(materialsSnap.docs.map(d => ({ id: d.id, ...d.data() })).filter(m => m.status === 'ready'))
       const primaryMaterials = allMaterials.filter(m => m.priority !== 'secondary')
       const secondaryMaterials = allMaterials.filter(m => m.priority === 'secondary')
 
@@ -885,9 +902,9 @@ exports.generateOutline = onRequest(
         .collection('materials').get()
 
       const selectedSet = new Set(selectedMaterialIds)
-      const selected = materialsSnap.docs
+      const selected = await hydrateExtractedText(materialsSnap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(m => m.status === 'ready' && selectedSet.has(m.id))
+        .filter(m => m.status === 'ready' && selectedSet.has(m.id)))
 
       if (selected.length === 0) {
         res.status(400).json({ error: 'None of the selected materials are ready.' })
@@ -976,9 +993,9 @@ exports.generateFlashcards = onRequest(
         .collection('certifications').doc(certId)
         .collection('materials').get()
 
-      const primaryMaterials = materialsSnap.docs
+      const primaryMaterials = await hydrateExtractedText(materialsSnap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(m => m.status === 'ready' && m.priority !== 'secondary')
+        .filter(m => m.status === 'ready' && m.priority !== 'secondary'))
 
       if (primaryMaterials.length === 0) {
         res.status(400).json({ error: 'No primary materials found.' })
@@ -1334,7 +1351,7 @@ exports.generateAssignment = onRequest(
     const materialsSnap = await db.collection('users').doc(userId)
       .collection('certifications').doc(certId)
       .collection('materials').get()
-    const materials = materialsSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+    const materials = (await hydrateExtractedText(materialsSnap.docs.map(d => ({ id: d.id, ...d.data() }))))
       .filter(m => m.status === 'ready' && m.examRole !== 'practice-test' && m.extractedText)
 
     // Prefer the study guide (already processed & organized) over raw materials
