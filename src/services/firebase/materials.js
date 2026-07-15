@@ -12,6 +12,7 @@ import {
 import {
   ref,
   uploadBytesResumable,
+  uploadString,
   getDownloadURL,
   deleteObject,
 } from 'firebase/storage'
@@ -20,10 +21,34 @@ import { db, storage } from './config'
 const materialsRef = (userId, certId) =>
   collection(db, 'users', userId, 'certifications', certId, 'materials')
 
+// Firestore caps a single document field at 1MiB, which full-length book/transcript
+// text regularly exceeds — so extracted text is stored in Storage instead, with
+// only the path kept on the Firestore doc (see uploadExtractedText below).
+const fetchExtractedText = async (path) => {
+  const url = await getDownloadURL(ref(storage, path))
+  const res = await fetch(url)
+  return res.text()
+}
+
+export const uploadExtractedText = async (userId, certId, materialId, text) => {
+  const path = `users/${userId}/certifications/${certId}/materials/${materialId}_extracted.txt`
+  await uploadString(ref(storage, path), text, 'raw', { contentType: 'text/plain' })
+  return path
+}
+
 export const getMaterials = async (userId, certId) => {
   const q = query(materialsRef(userId, certId), orderBy('createdAt', 'desc'))
   const snap = await getDocs(q)
-  return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  const materials = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+  return Promise.all(materials.map(async (m) => {
+    if (!m.extractedTextPath || m.extractedText) return m
+    try {
+      const extractedText = await fetchExtractedText(m.extractedTextPath)
+      return { ...m, extractedText }
+    } catch (e) {
+      return { ...m, extractedText: '' }
+    }
+  }))
 }
 
 export const addMaterialRecord = async (userId, certId, data) => {
@@ -40,10 +65,11 @@ export const updateMaterialRecord = async (userId, certId, materialId, data) => 
   await updateDoc(ref, { ...data, updatedAt: serverTimestamp() })
 }
 
-export const deleteMaterialRecord = async (userId, certId, materialId, storagePath) => {
-  if (storagePath) {
+export const deleteMaterialRecord = async (userId, certId, materialId, storagePath, extractedTextPath) => {
+  for (const path of [storagePath, extractedTextPath]) {
+    if (!path) continue
     try {
-      await deleteObject(ref(storage, storagePath))
+      await deleteObject(ref(storage, path))
     } catch (e) {
       // file may not exist in storage
     }

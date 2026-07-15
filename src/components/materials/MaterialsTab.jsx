@@ -6,6 +6,7 @@ import {
   updateMaterialRecord,
   deleteMaterialRecord,
   uploadFile,
+  uploadExtractedText,
   MATERIAL_TYPES,
 } from '../../services/firebase/materials'
 import { extractText } from '../../services/ai/extractor'
@@ -89,17 +90,21 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
         }
       }
 
+      const extractedTextPath = extractedText
+        ? await uploadExtractedText(user.uid, certId, materialId, extractedText)
+        : null
+
       await updateMaterialRecord(user.uid, certId, materialId, {
         url,
         storagePath: path,
-        extractedText: extractedText || '',
+        extractedTextPath,
         status: 'ready',
         progress: 100,
       })
 
       setMaterials(prev => prev.map(m =>
         m.id === materialId
-          ? { ...m, url, storagePath: path, extractedText, status: 'ready', progress: 100 }
+          ? { ...m, url, storagePath: path, extractedTextPath, extractedText, status: 'ready', progress: 100 }
           : m
       ))
     } catch (e) {
@@ -150,13 +155,16 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
     try {
       const { text, title } = await extractWebpageFn({ url })
       const name = labelOverride || title || url
+      const extractedTextPath = text
+        ? await uploadExtractedText(user.uid, certId, materialId, text)
+        : null
       await updateMaterialRecord(user.uid, certId, materialId, {
-        extractedText: text || '',
+        extractedTextPath,
         name,
         status: 'ready',
       })
       setMaterials(prev => prev.map(m =>
-        m.id === materialId ? { ...m, extractedText: text, name, status: 'ready' } : m
+        m.id === materialId ? { ...m, extractedTextPath, extractedText: text, name, status: 'ready' } : m
       ))
     } catch (e) {
       await updateMaterialRecord(user.uid, certId, materialId, { status: 'error', error: e.message })
@@ -169,7 +177,7 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
 
   const handleDelete = async (material) => {
     if (!confirm(`Remove "${material.name}"?`)) return
-    await deleteMaterialRecord(user.uid, certId, material.id, material.storagePath)
+    await deleteMaterialRecord(user.uid, certId, material.id, material.storagePath, material.extractedTextPath)
     setMaterials(prev => prev.filter(m => m.id !== material.id))
   }
 
