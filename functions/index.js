@@ -104,8 +104,10 @@ exports.generateTextbook = onRequest(
         ? domains.map((d, i) => `${i + 1}. ${d}`).join('\n')
         : 'All topics'
 
-      // Primary: raw text, equal budget per doc, up to 60k chars each — no compression, full detail
-      const perPrimary = primary.length > 0 ? Math.min(60000, Math.floor(300000 / primary.length)) : 60000
+      // Primary: raw text, equal share of a large shared pool — no per-doc cap, so a single big
+      // book gets (up to) the whole pool instead of being clipped to a small fraction of itself
+      const PRIMARY_CHAR_BUDGET = 900000
+      const perPrimary = primary.length > 0 ? Math.floor(PRIMARY_CHAR_BUDGET / primary.length) : PRIMARY_CHAR_BUDGET
       const primaryBlocks = primary.map(m => {
         const text = m.extractedText || (m.type === 'webpage' ? `URL: ${m.url}\n(text not extracted)` : '(no text)')
         return `[PRIMARY — ${m.type.toUpperCase()}: ${m.name}]\n${text.substring(0, perPrimary)}`
@@ -194,7 +196,7 @@ Output a structured list using the exact domain names above as headings. List ev
       let topicInventory = ''
       const extractionStream = getAnthropic().messages.stream({
         model: 'claude-sonnet-4-6',
-        max_tokens: isOutline ? 1024 : 2048,
+        max_tokens: isOutline ? 1024 : 4096,
         messages: [{ role: 'user', content: extractionPrompt }],
       })
       for await (const chunk of extractionStream) {
@@ -265,7 +267,7 @@ Write the complete, thorough Comprehensive Study Guide now. Be exhaustive — co
       let textbookContent = ''
       const textbookStream = getAnthropic().messages.stream({
         model: 'claude-opus-4-8',
-        max_tokens: isOutline ? 10000 : 32000,
+        max_tokens: isOutline ? 10000 : 48000,
         messages: [{ role: 'user', content: prompt }],
       })
       for await (const chunk of textbookStream) {
