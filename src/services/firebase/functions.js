@@ -55,3 +55,4 @@ export const parseSyllabusTopicsFn = (data) => callFunction('parseSyllabusTopics
 export const generateOutlineFn = (data, opts) => callFunction('generateOutline', data, opts)
 export const generateAssignmentFn = (data, opts) => callFunction('generateAssignment', data, opts)
 export const verifyLinksFn = (data) => callFunction('verifyLinks', data)
+export const verifyCertDomainsFn = (data) => callFunction('verifyCertDomains', data)

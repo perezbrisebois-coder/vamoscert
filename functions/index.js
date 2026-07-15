@@ -1572,6 +1572,53 @@ Return ONLY a valid JSON array like: ["Topic 1", "Topic 2", ...]`
   }
 )
 
+// ─── VERIFY CERT DOMAINS ──────────────────────────────────────────────────────
+exports.verifyCertDomains = onRequest(
+  { invoker: 'public', timeoutSeconds: 60 },
+  async (req, res) => {
+    setCors(req, res)
+    if (req.method === 'OPTIONS') { res.status(204).send(''); return }
+
+    const user = await verifyAuth(req, res)
+    if (!user) return
+
+    const raw = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {})
+    const body = raw.data || raw
+    const { certName, provider, domains } = body
+    if (!certName?.trim() || !provider?.trim()) {
+      res.status(400).json({ error: 'certName and provider required.' }); return
+    }
+
+    try {
+      const response = await getAnthropic().messages.create({
+        model: 'claude-opus-4-8',
+        max_tokens: 2048,
+        tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
+        messages: [{
+          role: 'user',
+          content: `Search the web for the CURRENT official Body of Knowledge / exam domains for the "${certName}" certification from ${provider}. Prefer the certification provider's own official page.
+
+Domains currently on file for this cert:
+${domains?.length ? domains.map(d => `- ${d}`).join('\n') : '(none on file)'}
+
+Compare the official current domains to the list on file, then respond with ONLY a JSON object (no other text, no markdown fences) in this exact shape:
+{"matches": true|false, "officialDomains": ["...", ...], "added": ["domains in the official list but missing from ours"], "removed": ["domains in our list but not in the official list"], "notes": "one or two sentence summary", "sources": [{"title": "...", "url": "..."}]}`,
+        }],
+      })
+
+      const textBlock = response.content.filter(b => b.type === 'text').pop()
+      if (!textBlock) throw new Error('No response from model.')
+      const match = textBlock.text.match(/\{[\s\S]*\}/)
+      if (!match) throw new Error('Could not parse verification result.')
+      const result = JSON.parse(match[0])
+      res.json(result)
+    } catch (e) {
+      console.error('verifyCertDomains error:', e)
+      res.status(500).json({ error: e.message || 'Failed to verify domains.' })
+    }
+  }
+)
+
 // ─── ANALYZE VIDEO FRAMES ─────────────────────────────────────────────────────
 exports.analyzeVideoFrames = onRequest(
   { invoker: 'public', timeoutSeconds: 300, memory: '2GiB' },

@@ -1,4 +1,6 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { extractText } from '../../services/ai/extractor'
+import { parseSyllabusTopicsFn, verifyCertDomainsFn } from '../../services/firebase/functions'
 
 export default function NewCertModal({ onClose, onCreate, presets }) {
   const [mode, setMode] = useState('preset') // 'preset' | 'custom' | 'class'
@@ -16,6 +18,12 @@ export default function NewCertModal({ onClose, onCreate, presets }) {
     },
   })
   const [domainInput, setDomainInput] = useState('')
+  const domainFileInputRef = useRef()
+  const [importingDomains, setImportingDomains] = useState(false)
+  const [domainImportError, setDomainImportError] = useState('')
+  const [verifying, setVerifying] = useState(false)
+  const [verifyError, setVerifyError] = useState('')
+  const [verifyResult, setVerifyResult] = useState(null)
   const [classForm, setClassForm] = useState({
     name: '',
     institution: '',
@@ -37,6 +45,54 @@ export default function NewCertModal({ onClose, onCreate, presets }) {
 
   const removeDomain = (i) => {
     setCustom(c => ({ ...c, domains: c.domains.filter((_, idx) => idx !== i) }))
+  }
+
+  const handleImportDomains = async (file) => {
+    setImportingDomains(true)
+    setDomainImportError('')
+    try {
+      const name = file.name.toLowerCase()
+      const type = name.endsWith('.pdf') ? 'pdf'
+        : (name.endsWith('.doc') || name.endsWith('.docx')) ? 'word'
+        : name.endsWith('.epub') ? 'epub'
+        : null
+      if (!type) { setDomainImportError('Upload a PDF, Word, or ePub document.'); return }
+
+      const text = await extractText(file, type)
+      if (!text?.trim()) { setDomainImportError('Could not read text from this file.'); return }
+
+      const { topics } = await parseSyllabusTopicsFn({ text })
+      setCustom(c => ({ ...c, domains: [...new Set([...c.domains, ...topics])] }))
+    } catch (e) {
+      setDomainImportError(e.message || 'Import failed.')
+    } finally {
+      setImportingDomains(false)
+      if (domainFileInputRef.current) domainFileInputRef.current.value = ''
+    }
+  }
+
+  const handleVerifyDomains = async () => {
+    setVerifying(true)
+    setVerifyError('')
+    setVerifyResult(null)
+    try {
+      const result = await verifyCertDomainsFn({
+        certName: custom.name,
+        provider: custom.provider,
+        domains: custom.domains,
+      })
+      setVerifyResult(result)
+    } catch (e) {
+      setVerifyError(e.message || 'Verification failed.')
+    } finally {
+      setVerifying(false)
+    }
+  }
+
+  const applyOfficialDomains = () => {
+    if (!verifyResult?.officialDomains) return
+    setCustom(c => ({ ...c, domains: verifyResult.officialDomains }))
+    setVerifyResult(null)
   }
 
   const addModule = () => {
@@ -185,7 +241,7 @@ export default function NewCertModal({ onClose, onCreate, presets }) {
               </div>
 
               <div className="form-group">
-                <label>Exam Domains <span style={{ fontWeight: 400, color: '#6b7280' }}>(recommended — drives topic distribution)</span></label>
+                <label>Exam Domains / Body of Knowledge <span style={{ fontWeight: 400, color: '#6b7280' }}>(recommended — drives topic distribution)</span></label>
                 <div className="domain-input-row">
                   <input
                     type="text"
@@ -198,6 +254,42 @@ export default function NewCertModal({ onClose, onCreate, presets }) {
                     + Add
                   </button>
                 </div>
+
+                <div className="domain-input-row" style={{ marginTop: 8 }}>
+                  <input
+                    ref={domainFileInputRef}
+                    type="file"
+                    accept=".pdf,.doc,.docx,.epub"
+                    style={{ display: 'none' }}
+                    onChange={e => e.target.files[0] && handleImportDomains(e.target.files[0])}
+                  />
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={() => domainFileInputRef.current?.click()}
+                    disabled={importingDomains}
+                    title="Upload the Body of Knowledge PDF, Word, or ePub doc — Claude will extract the domains automatically"
+                  >
+                    {importingDomains ? '⏳ Importing…' : '📄 Import from document'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-ghost btn-sm"
+                    onClick={handleVerifyDomains}
+                    disabled={verifying || !custom.name.trim() || !custom.provider.trim()}
+                    title="Search the web to confirm these domains match the current official Body of Knowledge"
+                  >
+                    {verifying ? '⏳ Checking…' : '🔍 Verify against official source'}
+                  </button>
+                </div>
+
+                {domainImportError && (
+                  <div className="alert-error">{domainImportError}<button onClick={() => setDomainImportError('')}>×</button></div>
+                )}
+                {verifyError && (
+                  <div className="alert-error">{verifyError}<button onClick={() => setVerifyError('')}>×</button></div>
+                )}
+
                 {custom.domains.length > 0 && (
                   <div className="domain-tags">
                     {custom.domains.map((d, i) => (
@@ -210,6 +302,34 @@ export default function NewCertModal({ onClose, onCreate, presets }) {
                 )}
                 {custom.domains.length === 0 && (
                   <p className="field-hint">Without domains the AI will cover all topics generally. Add domains to get structured coverage and domain-level results.</p>
+                )}
+
+                {verifyResult && (
+                  <div className="field-hint" style={{ border: '1px solid #d1d5db', borderRadius: 6, padding: '8px 10px', marginTop: 8 }}>
+                    {verifyResult.matches ? (
+                      <p style={{ margin: 0, color: '#15803d' }}>✓ Matches the current official Body of Knowledge.</p>
+                    ) : (
+                      <>
+                        <p style={{ margin: '0 0 6px' }}>{verifyResult.notes}</p>
+                        {verifyResult.added?.length > 0 && (
+                          <p style={{ margin: '0 0 4px' }}><strong>Missing from ours:</strong> {verifyResult.added.join(', ')}</p>
+                        )}
+                        {verifyResult.removed?.length > 0 && (
+                          <p style={{ margin: '0 0 4px' }}><strong>Not in official list:</strong> {verifyResult.removed.join(', ')}</p>
+                        )}
+                        <button type="button" className="btn-ghost btn-sm" onClick={applyOfficialDomains}>
+                          Use official domain list
+                        </button>
+                      </>
+                    )}
+                    {verifyResult.sources?.length > 0 && (
+                      <p style={{ margin: '6px 0 0', fontSize: 12 }}>
+                        Sources: {verifyResult.sources.map((s, i) => (
+                          <span key={i}>{i > 0 && ', '}<a href={s.url} target="_blank" rel="noreferrer">{s.title || s.url}</a></span>
+                        ))}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
