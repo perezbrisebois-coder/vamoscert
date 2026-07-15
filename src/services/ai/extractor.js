@@ -50,14 +50,19 @@ export const extractFromEpub = async (file) => {
   const opfXml = await zip.file(opfPath)?.async('text')
   if (!opfXml) throw new Error('Invalid ePub: cannot read OPF file')
 
-  // Build manifest: id → href
+  // Build manifest: id → href. Attribute order varies between ePub-generation tools
+  // (Calibre/Sigil/pandoc commonly write href before id) so parse each attribute
+  // independently instead of requiring a fixed order.
   const manifest = {}
-  for (const m of opfXml.matchAll(/<item[^>]+id="([^"]+)"[^>]+href="([^"]+)"[^>]*>/g)) {
-    manifest[m[1]] = m[2]
+  for (const itemTag of opfXml.matchAll(/<item\b[^>]*\/?>/gi)) {
+    const tag = itemTag[0]
+    const idMatch = tag.match(/\bid=["']([^"']+)["']/)
+    const hrefMatch = tag.match(/\bhref=["']([^"']+)["']/)
+    if (idMatch && hrefMatch) manifest[idMatch[1]] = hrefMatch[1]
   }
 
   // Follow spine reading order
-  const spineIds = [...opfXml.matchAll(/<itemref[^>]+idref="([^"]+)"/g)].map(m => m[1])
+  const spineIds = [...opfXml.matchAll(/<itemref\b[^>]*\bidref=["']([^"']+)["']/gi)].map(m => m[1])
 
   const stripHtml = (html) => html
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -79,7 +84,9 @@ export const extractFromEpub = async (file) => {
     if (text) fullText += text + '\n\n'
   }
 
-  return fullText.trim()
+  const result = fullText.trim()
+  if (!result) throw new Error('Could not extract any readable text from this ePub — the spine or manifest may be in a format this parser cannot read.')
+  return result
 }
 
 export const extractText = async (file, type) => {

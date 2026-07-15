@@ -79,6 +79,7 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
       })
 
       let extractedText = ''
+      let extractionError = null
       if (type === 'word' || type === 'pdf' || type === 'epub') {
         setMaterials(prev => prev.map(m =>
           m.id === materialId ? { ...m, status: 'extracting', progress: 100 } : m
@@ -87,7 +88,19 @@ export default function MaterialsTab({ cert, certId, onGoToTextbook, onSyllabusC
           extractedText = await extractText(file, type)
         } catch (e) {
           console.warn('Text extraction failed:', e)
+          extractionError = e.message || 'Could not extract text from this file.'
         }
+      }
+
+      if (extractionError) {
+        await updateMaterialRecord(user.uid, certId, materialId, {
+          url, storagePath: path, status: 'error', error: extractionError,
+        })
+        setMaterials(prev => prev.map(m =>
+          m.id === materialId ? { ...m, url, storagePath: path, status: 'error', error: extractionError } : m
+        ))
+        setError(`Failed to process ${file.name}: ${extractionError}`)
+        return
       }
 
       const extractedTextPath = extractedText
