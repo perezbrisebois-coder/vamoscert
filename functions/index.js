@@ -95,7 +95,8 @@ exports.generateTextbook = onRequest(
     try {
       const raw = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {})
       const body = raw.data || raw
-      const { userId, certId, certName, domains, mode = 'comprehensive' } = body
+      const { userId, certId, certName, mode = 'comprehensive' } = body
+      const domains = Array.isArray(body.domains) ? body.domains : []
       const isOutline = mode === 'outline'
       const db = admin.firestore()
 
@@ -356,7 +357,8 @@ exports.generateGlossary = onRequest(
     try {
       const raw = typeof req.body === 'string' ? JSON.parse(req.body) : (req.body || {})
       const body = raw.data || raw
-      const { userId, certId, certName, domains } = body
+      const { userId, certId, certName } = body
+      const domains = Array.isArray(body.domains) ? body.domains : []
       const db = admin.firestore()
 
       // Read the existing textbook as source of truth

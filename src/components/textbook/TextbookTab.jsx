@@ -11,6 +11,13 @@ function markdownToHtml(md) {
   return marked.parse(md)
 }
 
+// cert.syllabus is an array of topics when set via the Materials → Syllabus tab, but a
+// plain pasted string when set via the "Class" creation form — only treat it as a domain
+// list when it's actually an array.
+function resolveDomains(cert) {
+  return Array.isArray(cert.syllabus) && cert.syllabus.length ? cert.syllabus : (cert.domains || [])
+}
+
 // Build a tree: ## sections are top-level chapters (level 2); # sections (level 1) are rare
 function buildTree(sections) {
   const tree = []
@@ -125,7 +132,7 @@ export default function TextbookTab({ cert, certId }) {
         userId: user.uid,
         certId,
         certName: cert.name,
-        domains: cert.syllabus?.length ? cert.syllabus : (cert.domains || []),
+        domains: resolveDomains(cert),
       })
     } catch (e) {
       setError(e.message || 'Failed to generate glossary.')
@@ -166,7 +173,7 @@ export default function TextbookTab({ cert, certId }) {
         userId: user.uid,
         certId,
         certName: cert.name,
-        domains: cert.syllabus?.length ? cert.syllabus : (cert.domains || []),
+        domains: resolveDomains(cert),
         mode,
       }, { signal: abortRef.current.signal })
     } catch (e) {
