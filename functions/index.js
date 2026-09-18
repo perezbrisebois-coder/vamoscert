@@ -1369,15 +1369,29 @@ exports.generateAssignment = onRequest(
       context = materials.map(m => `[${m.name}]\n${m.extractedText.substring(0, perDoc)}`).join('\n\n---\n\n')
     }
 
+    // Materials may be thin or absent — e.g. the student only uploaded a syllabus,
+    // which stores a topic list on the cert doc rather than extracted text here.
+    // Rather than hard-failing, fall back to that topic list for scope, and let the
+    // prompt lean on general knowledge to fill any remaining gaps.
+    const MIN_USEFUL_CONTEXT_CHARS = 500
+    if (context.trim().length < MIN_USEFUL_CONTEXT_CHARS) {
+      const certSnap = await db.collection('users').doc(userId)
+        .collection('certifications').doc(certId).get()
+      const syllabusTopics = certSnap.exists ? (certSnap.data().syllabus || []) : []
+      if (syllabusTopics.length > 0) {
+        const syllabusBlock = `[Course Syllabus Topics for ${certName}]\n${syllabusTopics.map(t => `- ${t}`).join('\n')}`
+        context = context.trim() ? `${context}\n\n---\n\n${syllabusBlock}` : syllabusBlock
+      }
+    }
     if (!context.trim()) {
-      res.status(400).json({ error: 'No course materials found. Upload materials first.' }); return
+      context = `[No course materials uploaded yet for ${certName}. Rely on your general knowledge of this certification's subject matter.]`
     }
 
-    const citationRule = `When citing external sources (articles, websites, publications), format them as proper academic citations and write [⚠️ unverified link] immediately after any URL you include, so the student knows to confirm the link is current and accurate before submitting. Always prioritize the provided course materials as the primary source.`
+    const citationRule = `When citing external sources (articles, websites, publications), format them as proper academic citations and write [⚠️ unverified link] immediately after any URL you include, so the student knows to confirm the link is current and accurate before submitting. Always prioritize the provided course materials as the primary source, but never let thin or missing materials stop you from fully addressing the assignment — fall back on your general subject-matter knowledge to fill any gaps, and mark any claim that isn't grounded in the provided materials with [ℹ️ general knowledge] so the student knows what to double-check against their actual course content.`
 
     const systemPrompt = hasDraft
-      ? `You are an expert academic writing assistant helping a student with coursework for "${certName}". Your task is to revise and expand the student's existing draft to fully meet the assignment requirements. Preserve the student's voice and core arguments — strengthen, expand, and refine as needed. Ground additions in the provided course materials first; you may also cite relevant external academic sources where the assignment requires it. ${citationRule}`
-      : `You are an expert academic writing assistant helping a student with coursework for "${certName}". Ground every claim primarily in the provided course materials. Where the assignment requires external sources (e.g. discussion posts, research tasks), you may cite relevant articles or publications — but the course materials should be your foundation. Write clearly and academically. ${citationRule}`
+      ? `You are an expert academic writing assistant helping a student with coursework for "${certName}". Your task is to revise and expand the student's existing draft to fully meet the assignment requirements. Preserve the student's voice and core arguments — strengthen, expand, and refine as needed. Ground additions in the provided course materials first; where those materials are thin, missing, or don't cover something the assignment needs, use your general knowledge of the subject instead of leaving gaps — you may also cite relevant external academic sources where helpful. ${citationRule}`
+      : `You are an expert academic writing assistant helping a student with coursework for "${certName}". Ground claims in the provided course materials whenever they cover the topic. If the materials are thin, incomplete, or missing entirely (e.g. only a syllabus topic list was provided), do not refuse or leave the assignment unaddressed — use your general knowledge of the subject to write a complete, correct response, citing relevant external sources where useful. Write clearly and academically. ${citationRule}`
 
     const userPrompt = hasDraft
       ? `COURSE MATERIALS:\n${context}\n\nASSIGNMENT:\n${assignmentText.trim()}\n\nSTUDENT'S DRAFT:\n${draftText.trim()}\n\nRevise and expand this draft to fully meet the assignment requirements. Preserve the student's core arguments and voice. Strengthen weak sections, add missing content from the course materials, improve structure and academic tone. Return the complete revised draft.`
