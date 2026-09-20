@@ -137,7 +137,7 @@ exports.generateTextbook = onRequest(
         if (!text || text.length < 100) return null
         try {
           const resp = await getAnthropic().messages.create({
-            model: 'claude-haiku-4-5-20251001',
+            model: 'claude-haiku-4-5',
             max_tokens: 600,
             messages: [{
               role: 'user',
@@ -213,8 +213,8 @@ Output a structured list using the exact domain names above as headings. List ev
 
       let topicInventory = ''
       const extractionStream = getAnthropic().messages.stream({
-        model: 'claude-sonnet-4-6',
-        max_tokens: isOutline ? 1024 : 4096,
+        model: 'claude-sonnet-5',
+        max_tokens: isOutline ? 2048 : 6144,
         messages: [{ role: 'user', content: extractionPrompt }],
       })
       for await (const chunk of extractionStream) {
@@ -284,7 +284,7 @@ Write the complete, thorough Comprehensive Study Guide now. Be exhaustive — co
 
       let textbookContent = ''
       const textbookStream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         max_tokens: isOutline ? 10000 : 48000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -415,7 +415,7 @@ Generate the complete glossary now:`
 
       let glossaryContent = ''
       const stream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         max_tokens: 32000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -710,8 +710,9 @@ Return ONLY valid JSON with the same structure as input (no markdown):
 ${JSON.stringify({ questions }, null, 2)}`
 
       const reviewResponse = await getAnthropic().messages.create({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         max_tokens: 8000,
+        thinking: { type: 'disabled' },
         messages: [{ role: 'user', content: reviewPrompt }],
       })
 
@@ -840,8 +841,8 @@ ${contentText}
 Generate the complete study guide outline now:`
 
       const message = await getAnthropic().messages.create({
-        model: 'claude-opus-4-8',
-        max_tokens: 8192,
+        model: 'claude-opus-5',
+        max_tokens: 12000,
         messages: [{ role: 'user', content: prompt }],
       })
 
@@ -941,13 +942,18 @@ ${contentText}
 
 Generate the complete outline now, covering every major topic from the materials within the ${resolvedMin}–${resolvedMax} page target:`
 
-      const message = await getAnthropic().messages.create({
-        model: 'claude-opus-4-8',
+      let content = ''
+      const outlineStream = getAnthropic().messages.stream({
+        model: 'claude-opus-5',
         max_tokens: maxTokens,
         messages: [{ role: 'user', content: prompt }],
       })
+      for await (const chunk of outlineStream) {
+        if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
+          content += chunk.delta.text
+        }
+      }
 
-      const content = message.content[0].text
       const outlineRef = db
         .collection('users').doc(userId)
         .collection('certifications').doc(certId)
@@ -1049,7 +1055,7 @@ Generate all flashcards now using the ===CARD=== delimiter format above:`
 
       let flashcardText = ''
       const flashcardStream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         max_tokens: 32000,
         messages: [{ role: 'user', content: prompt }],
       })
@@ -1158,8 +1164,9 @@ ${studyContext || '(No study context provided — use your general knowledge of 
 
       let responseText = ''
       const stream = getAnthropic().messages.stream({
-        model: 'claude-opus-4-8',
+        model: 'claude-opus-5',
         max_tokens: 300,
+        thinking: { type: 'disabled' },
         system: systemPrompt,
         messages,
       })
@@ -1400,8 +1407,8 @@ exports.generateAssignment = onRequest(
     // Run Claude Opus and GPT-4o in parallel
     const [claudeResult, gptResult] = await Promise.allSettled([
       getAnthropic().messages.create({
-        model: 'claude-opus-4-8',
-        max_tokens: 4096,
+        model: 'claude-opus-5',
+        max_tokens: 8000,
         system: systemPrompt,
         messages: [{ role: 'user', content: userPrompt }],
       }),
@@ -1428,8 +1435,8 @@ exports.generateAssignment = onRequest(
 
     if (claudeDraft && gptDraft) {
       const synthResponse = await getAnthropic().messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 4096,
+        model: 'claude-sonnet-5',
+        max_tokens: 8000,
         messages: [{
           role: 'user',
           content: hasDraft
@@ -1526,7 +1533,7 @@ exports.verifyLinks = onRequest(
 
         // Ask Claude Haiku if the page content supports the claim
         const check = await getAnthropic().messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5',
           max_tokens: 200,
           messages: [{
             role: 'user',
@@ -1581,7 +1588,7 @@ exports.parseSyllabusTopics = onRequest(
 
     try {
       const response = await getAnthropic().messages.create({
-        model: 'claude-haiku-4-5-20251001',
+        model: 'claude-haiku-4-5',
         max_tokens: 1024,
         messages: [{
           role: 'user',
@@ -1626,8 +1633,8 @@ exports.verifyCertDomains = onRequest(
 
     try {
       const response = await getAnthropic().messages.create({
-        model: 'claude-opus-4-8',
-        max_tokens: 2048,
+        model: 'claude-opus-5',
+        max_tokens: 4096,
         tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5 }],
         messages: [{
           role: 'user',
@@ -1748,7 +1755,7 @@ exports.analyzeVideoFrames = onRequest(
         })
 
         const response = await getAnthropic().messages.create({
-          model: 'claude-haiku-4-5-20251001',
+          model: 'claude-haiku-4-5',
           max_tokens: 2048,
           messages: [{ role: 'user', content }],
         })
