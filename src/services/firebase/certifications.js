@@ -10,8 +10,10 @@ import {
   where,
   orderBy,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore'
-import { db } from './config'
+import { ref, listAll, deleteObject } from 'firebase/storage'
+import { db, storage } from './config'
 
 // Each certification is scoped to a user
 const userCertsRef = (userId) =>
@@ -45,9 +47,38 @@ export const updateCertification = async (userId, certId, data) => {
   await updateDoc(ref, { ...data, updatedAt: serverTimestamp() })
 }
 
+// Firestore doesn't cascade deletes, so every subcollection under a cert
+// must be cleared explicitly or its docs are orphaned.
+const CERT_SUBCOLLECTIONS = [
+  'materials',
+  'textbooks',
+  'practiceTests',
+  'practiceInsights',
+  'studyGuides',
+  'outlines',
+  'flashcards',
+]
+
+// Recursively deletes every file under a Storage folder (uploads + extracted text)
+const deleteStorageFolder = async (folderRef) => {
+  const { items, prefixes } = await listAll(folderRef)
+  await Promise.all(items.map(item => deleteObject(item)))
+  await Promise.all(prefixes.map(deleteStorageFolder))
+}
+
 export const deleteCertification = async (userId, certId) => {
-  const ref = doc(db, 'users', userId, 'certifications', certId)
-  await deleteDoc(ref)
+  await deleteStorageFolder(ref(storage, `users/${userId}/certifications/${certId}`))
+
+  for (const name of CERT_SUBCOLLECTIONS) {
+    const snap = await getDocs(collection(db, 'users', userId, 'certifications', certId, name))
+    for (let i = 0; i < snap.docs.length; i += 500) {
+      const batch = writeBatch(db)
+      snap.docs.slice(i, i + 500).forEach(d => batch.delete(d.ref))
+      await batch.commit()
+    }
+  }
+
+  await deleteDoc(doc(db, 'users', userId, 'certifications', certId))
 }
 
 // Preset certification templates
